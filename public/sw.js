@@ -1,4 +1,4 @@
-const CACHE_NAME = 'orienteering-v1';
+const CACHE_NAME = 'orienteering-v2';
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',

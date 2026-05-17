@@ -4,9 +4,19 @@ export interface VersionInfo {
   changes: string[];
 }
 
-export const APP_VERSION = '1.3.2';
+export const APP_VERSION = '1.4.0';
 
 export const VERSION_HISTORY: VersionInfo[] = [
+  {
+    version: '1.4.0',
+    date: '2025-05-17',
+    changes: [
+      'Полноэкранный режим — скрыт интерфейс телефона (статус-бар, навигация)',
+      'PWA manifest переключён на display: fullscreen',
+      'Поддержка safe-area для телефонов с вырезом (notch)',
+      'Viewport fit: cover для полного покрытия экрана',
+    ],
+  },
   {
     version: '1.3.2',
     date: '2025-05-17',
