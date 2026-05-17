@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { parseFullMapFile, type ParsedMapResult } from '@/lib/kmz-parser';
+import { parseFullMapFile, parseFullMapFromURL, type ParsedMapResult } from '@/lib/kmz-parser';
 import { useGeolocation } from '@/hooks/use-geolocation';
 import { useDeviceOrientation } from '@/hooks/use-device-orientation';
 import { Button } from '@/components/ui/button';
@@ -71,9 +71,22 @@ export default function OrienteeringMap() {
   const [isLoading, setIsLoading] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [showUrlDialog, setShowUrlDialog] = useState(false);
+  const [mapUrl, setMapUrl] = useState('');
+  const [savedMaps, setSavedMaps] = useState<Array<{ name: string; url: string }>>([]);
 
   const geo = useGeolocation();
   const orientation = useDeviceOrientation();
+
+  // Load saved maps from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('orienteering-saved-maps');
+      if (saved) {
+        setSavedMaps(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
 
   // PWA install prompt
   useEffect(() => {
@@ -271,116 +284,116 @@ export default function OrienteeringMap() {
     }
   }, [showTrail]);
 
-  // File upload handler - full parsing with overlay support
+  // Apply parsed map result to the Leaflet map
+  const applyMapResult = useCallback((result: ParsedMapResult, fileName: string) => {
+    console.log('[Map Parser]', result.debugInfo.join('\n'));
+    setDebugInfo(result.debugInfo);
+
+    // Remove existing layers
+    if (kmlLayerRef.current) {
+      kmlLayerRef.current.remove();
+      kmlLayerRef.current = null;
+    }
+    overlayLayersRef.current.forEach((layer) => layer.remove());
+    overlayLayersRef.current = [];
+
+    const map = mapRef.current;
+    if (!map) {
+      toast({ title: 'Ошибка', description: 'Карта не инициализирована', variant: 'destructive' });
+      return;
+    }
+
+    let hasContent = false;
+    const allBounds: L.LatLngBounds[] = [];
+
+    // Add image overlays (GroundOverlay)
+    if (result.overlays.length > 0) {
+      for (const overlay of result.overlays) {
+        const bounds = L.latLngBounds(
+          L.latLng(overlay.bounds.south, overlay.bounds.west),
+          L.latLng(overlay.bounds.north, overlay.bounds.east)
+        );
+
+        const imageOverlay = L.imageOverlay(overlay.imageUrl, bounds, {
+          opacity: 0.85,
+          interactive: true,
+        }).addTo(map);
+
+        overlayLayersRef.current.push(imageOverlay);
+        allBounds.push(bounds);
+        hasContent = true;
+      }
+    }
+
+    // Add vector features (GeoJSON)
+    if (result.geoJson) {
+      const layer = L.geoJSON(result.geoJson, {
+        style: () => ({
+          color: '#E67E22',
+          weight: 2,
+          opacity: 0.8,
+          fillColor: '#E67E22',
+          fillOpacity: 0.15,
+        }),
+        pointToLayer: (_feature, latlng) => {
+          return L.marker(latlng, { icon: defaultIcon });
+        },
+        onEachFeature: (feature, layer) => {
+          if (feature.properties) {
+            const name = feature.properties.name || feature.properties.title || '';
+            const desc = feature.properties.description || '';
+            if (name || desc) {
+              layer.bindPopup(`<strong>${name}</strong>${desc ? '<br/>' + desc : ''}`);
+            }
+          }
+        },
+      });
+
+      layer.addTo(map);
+      kmlLayerRef.current = layer;
+
+      if (layer.getBounds().isValid()) {
+        allBounds.push(layer.getBounds());
+      }
+      hasContent = true;
+    }
+
+    // Fit map to show all loaded content
+    if (allBounds.length > 0) {
+      const combinedBounds = allBounds.reduce((acc, b) => acc.extend(b), allBounds[0]);
+      map.fitBounds(combinedBounds.pad(0.1));
+    }
+
+    setKmlLoaded(true);
+    setKmlName(fileName);
+
+    if (hasContent) {
+      const parts: string[] = [];
+      if (result.overlays.length > 0) parts.push(`${result.overlays.length} слой(ёв) изображения`);
+      if (result.featureCount > 0) parts.push(`${result.featureCount} векторных объектов`);
+      toast({
+        title: 'Карта загружена',
+        description: `${fileName}: ${parts.join(', ')}`,
+      });
+    } else {
+      toast({
+        title: 'Файл загружен, но данных нет',
+        description: 'KMZ не содержит отображаемых элементов. Откройте отладку для деталей.',
+        variant: 'destructive',
+      });
+    }
+  }, []);
+
+  // File upload handler
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsLoading(true);
-    setDebugInfo([]);
-
     try {
-      const result: ParsedMapResult = await parseFullMapFile(file);
-
-      // Log debug info
-      console.log('[KMZ Parser]', result.debugInfo.join('\n'));
-      setDebugInfo(result.debugInfo);
-
-      // Remove existing layers
-      if (kmlLayerRef.current) {
-        kmlLayerRef.current.remove();
-        kmlLayerRef.current = null;
-      }
-      overlayLayersRef.current.forEach((layer) => layer.remove());
-      overlayLayersRef.current = [];
-
-      const map = mapRef.current;
-      if (!map) {
-        toast({ title: 'Ошибка', description: 'Карта не инициализирована', variant: 'destructive' });
-        return;
-      }
-
-      let hasContent = false;
-      const allBounds: L.LatLngBounds[] = [];
-
-      // Add image overlays (GroundOverlay)
-      if (result.overlays.length > 0) {
-        for (const overlay of result.overlays) {
-          const bounds = L.latLngBounds(
-            L.latLng(overlay.bounds.south, overlay.bounds.west),
-            L.latLng(overlay.bounds.north, overlay.bounds.east)
-          );
-
-          const imageOverlay = L.imageOverlay(overlay.imageUrl, bounds, {
-            opacity: 0.85,
-            interactive: true,
-          }).addTo(map);
-
-          overlayLayersRef.current.push(imageOverlay);
-          allBounds.push(bounds);
-          hasContent = true;
-        }
-      }
-
-      // Add vector features (GeoJSON)
-      if (result.geoJson) {
-        const layer = L.geoJSON(result.geoJson, {
-          style: () => ({
-            color: '#E67E22',
-            weight: 2,
-            opacity: 0.8,
-            fillColor: '#E67E22',
-            fillOpacity: 0.15,
-          }),
-          pointToLayer: (_feature, latlng) => {
-            return L.marker(latlng, { icon: defaultIcon });
-          },
-          onEachFeature: (feature, layer) => {
-            if (feature.properties) {
-              const name = feature.properties.name || feature.properties.title || '';
-              const desc = feature.properties.description || '';
-              if (name || desc) {
-                layer.bindPopup(`<strong>${name}</strong>${desc ? '<br/>' + desc : ''}`);
-              }
-            }
-          },
-        });
-
-        layer.addTo(map);
-        kmlLayerRef.current = layer;
-
-        if (layer.getBounds().isValid()) {
-          allBounds.push(layer.getBounds());
-        }
-        hasContent = true;
-      }
-
-      // Fit map to show all loaded content
-      if (allBounds.length > 0) {
-        const combinedBounds = allBounds.reduce((acc, b) => acc.extend(b), allBounds[0]);
-        map.fitBounds(combinedBounds.pad(0.1));
-      }
-
-      setKmlLoaded(true);
-      setKmlName(file.name);
-
-      if (hasContent) {
-        const parts: string[] = [];
-        if (result.overlays.length > 0) parts.push(`${result.overlays.length} слой(ёв) изображения`);
-        if (result.featureCount > 0) parts.push(`${result.featureCount} векторных объектов`);
-        toast({
-          title: 'Карта загружена',
-          description: `${file.name}: ${parts.join(', ')}`,
-        });
-      } else {
-        toast({
-          title: 'Файл загружен, но данных нет',
-          description: 'KMZ не содержит отображаемых элементов. Откройте отладку для деталей.',
-          variant: 'destructive',
-        });
-      }
+      const result = await parseFullMapFile(file);
+      applyMapResult(result, file.name);
     } catch (err: any) {
-      console.error('[KMZ Parser Error]', err);
       toast({
         title: 'Ошибка загрузки',
         description: err.message || 'Не удалось загрузить файл карты',
@@ -391,7 +404,35 @@ export default function OrienteeringMap() {
     }
 
     e.target.value = '';
-  }, []);
+  }, [applyMapResult]);
+
+  // URL-based map loading
+  const handleLoadFromUrl = useCallback(async () => {
+    if (!mapUrl.trim()) return;
+
+    setIsLoading(true);
+    try {
+      const result = await parseFullMapFromURL(mapUrl.trim());
+      applyMapResult(result, mapUrl.split('/').pop() || 'URL карта');
+
+      // Save to recent maps
+      const newMap = { name: mapUrl.split('/').pop() || 'Карта', url: mapUrl.trim() };
+      const updated = [newMap, ...savedMaps.filter(m => m.url !== newMap.url)].slice(0, 10);
+      setSavedMaps(updated);
+      try { localStorage.setItem('orienteering-saved-maps', JSON.stringify(updated)); } catch {}
+
+      setShowUrlDialog(false);
+      setMapUrl('');
+    } catch (err: any) {
+      toast({
+        title: 'Ошибка загрузки',
+        description: err.message || 'Не удалось загрузить карту по ссылке',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mapUrl, savedMaps, applyMapResult]);
 
   // Center on position
   const centerOnPosition = useCallback(() => {
@@ -451,8 +492,16 @@ export default function OrienteeringMap() {
               </button>
             )}
 
+            {/* Load from URL button */}
+            <button
+              className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border hover:bg-accent transition-colors active:scale-95"
+              onClick={() => setShowUrlDialog(true)}
+            >
+              <span className="text-sm font-medium text-foreground">🌐 URL</span>
+            </button>
+
             <label className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border cursor-pointer hover:bg-accent transition-colors active:scale-95">
-              <span className="text-sm font-medium text-foreground">📂 Карта</span>
+              <span className="text-sm font-medium text-foreground">📂 Файл</span>
               <input
                 type="file"
                 accept=".kmz,.kml"
@@ -476,6 +525,82 @@ export default function OrienteeringMap() {
             <Button size="sm" onClick={handleInstall} className="rounded-lg">
               Установить
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* URL Load Dialog */}
+      {showUrlDialog && (
+        <div className="absolute inset-0 z-[2000] bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-background rounded-2xl shadow-2xl border border-border w-full max-w-md overflow-hidden">
+            <div className="p-5">
+              <h2 className="text-lg font-bold text-foreground mb-1">Загрузить карту по ссылке</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Вставьте прямую ссылку на KMZ или KML файл
+              </p>
+
+              <input
+                type="url"
+                value={mapUrl}
+                onChange={(e) => setMapUrl(e.target.value)}
+                placeholder="https://example.com/map.kmz"
+                className="w-full h-12 px-4 rounded-xl border border-input bg-background text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleLoadFromUrl();
+                }}
+                autoFocus
+              />
+
+              {/* Saved / recent maps */}
+              {savedMaps.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Недавние карты:</p>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {savedMaps.map((m, i) => (
+                      <button
+                        key={i}
+                        className="w-full text-left px-3 py-2 rounded-lg bg-muted/50 hover:bg-muted text-xs text-foreground truncate transition-colors"
+                        onClick={() => {
+                          setMapUrl(m.url);
+                        }}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Tips */}
+              <div className="mt-4 p-3 rounded-xl bg-muted/30 border border-border">
+                <p className="text-xs text-muted-foreground">
+                  <strong>💡 Откуда взять ссылку:</strong>
+                </p>
+                <ul className="text-xs text-muted-foreground mt-1 space-y-0.5 list-disc list-inside">
+                  <li>Google Диск — &quot;Доступ по ссылке&quot;, скопируйте URL</li>
+                  <li>Dropbox — замените dl=0 на dl=1 в конце</li>
+                  <li>Яндекс.Диск — скопируйте публичную ссылку</li>
+                  <li>Любой веб-сервер с прямым доступом к файлу</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-4 pt-0">
+              <Button
+                variant="outline"
+                className="flex-1 rounded-xl h-11"
+                onClick={() => { setShowUrlDialog(false); setMapUrl(''); }}
+              >
+                Отмена
+              </Button>
+              <Button
+                className="flex-1 rounded-xl h-11"
+                onClick={handleLoadFromUrl}
+                disabled={!mapUrl.trim() || isLoading}
+              >
+                {isLoading ? 'Загрузка...' : 'Загрузить'}
+              </Button>
+            </div>
           </div>
         </div>
       )}

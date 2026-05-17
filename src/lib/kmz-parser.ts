@@ -72,6 +72,58 @@ export interface ParsedMapResult {
 }
 
 /**
+ * Load and parse a map from a URL (KMZ or KML)
+ * Uses a server-side proxy to avoid CORS issues
+ */
+export async function parseFullMapFromURL(url: string): Promise<ParsedMapResult> {
+  const debugInfo: string[] = [];
+  debugInfo.push(`Загрузка по URL: ${url}`);
+
+  // Use our proxy API to fetch the file
+  const proxyUrl = `/api/map-proxy?url=${encodeURIComponent(url)}`;
+
+  const response = await fetch(proxyUrl);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Ошибка загрузки: ${response.status}`);
+  }
+
+  const contentType = response.headers.get('X-Content-Type') || '';
+  const contentLength = response.headers.get('X-Content-Length') || '?';
+  debugInfo.push(`Тип: ${contentType}, размер: ${contentLength}`);
+
+  const urlLower = url.toLowerCase();
+
+  if (urlLower.endsWith('.kmz') || contentType.includes('application/vnd.google-earth.kmz') || contentType.includes('application/zip')) {
+    const arrayBuffer = await response.arrayBuffer();
+    debugInfo.push(`Получено байт: ${arrayBuffer.byteLength}`);
+    const file = new File([arrayBuffer], 'map.kmz', { type: 'application/vnd.google-earth.kmz' });
+    return parseFullKMZ(file, debugInfo);
+  } else if (urlLower.endsWith('.kml') || contentType.includes('application/vnd.google-earth.kml') || contentType.includes('text/xml')) {
+    const text = await response.text();
+    debugInfo.push(`Получено символов: ${text.length}`);
+    const file = new File([text], 'map.kml', { type: 'application/vnd.google-earth.kml+xml' });
+    return parseFullKML(file, debugInfo);
+  } else {
+    // Try to detect by content
+    const arrayBuffer = await response.arrayBuffer();
+    const firstBytes = new Uint8Array(arrayBuffer.slice(0, 4));
+
+    // Check if it's a ZIP (KMZ)
+    if (firstBytes[0] === 0x50 && firstBytes[1] === 0x4b) {
+      debugInfo.push('Определён формат: KMZ (ZIP)');
+      const file = new File([arrayBuffer], 'map.kmz', { type: 'application/vnd.google-earth.kmz' });
+      return parseFullKMZ(file, debugInfo);
+    } else {
+      debugInfo.push('Определён формат: KML (XML)');
+      const text = new TextDecoder().decode(arrayBuffer);
+      const file = new File([text], 'map.kml', { type: 'application/vnd.google-earth.kml+xml' });
+      return parseFullKML(file, debugInfo);
+    }
+  }
+}
+
+/**
  * Full parse of a map file - extracts both vector features AND image overlays
  */
 export async function parseFullMapFile(file: File): Promise<ParsedMapResult> {
