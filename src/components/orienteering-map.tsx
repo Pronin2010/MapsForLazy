@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { parseMapFile } from '@/lib/kmz-parser';
+import { parseFullMapFile, type ParsedMapResult } from '@/lib/kmz-parser';
 import { useGeolocation } from '@/hooks/use-geolocation';
 import { useDeviceOrientation } from '@/hooks/use-device-orientation';
 import { Button } from '@/components/ui/button';
@@ -54,6 +54,7 @@ export default function OrienteeringMap() {
   const headingMarkerRef = useRef<L.Polyline | null>(null);
   const accuracyCircleRef = useRef<L.Circle | null>(null);
   const kmlLayerRef = useRef<L.GeoJSON | null>(null);
+  const overlayLayersRef = useRef<L.ImageOverlay[]>([]);
   const trailLineRef = useRef<L.Polyline | null>(null);
   const trailPointsRef = useRef<L.LatLng[]>([]);
   const autoCenterRef = useRef(true);
@@ -61,13 +62,13 @@ export default function OrienteeringMap() {
   const [kmlLoaded, setKmlLoaded] = useState(false);
   const [kmlName, setKmlName] = useState<string>('');
   const [showTrail, setShowTrail] = useState(true);
-  const compassHeadingRef = useRef<number | null>(null);
-  const [, forceUpdate] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
 
   const geo = useGeolocation();
   const orientation = useDeviceOrientation();
 
-  // Initialize map - no setState in effect, use ref-based flag
+  // Initialize map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -104,7 +105,6 @@ export default function OrienteeringMap() {
     L.control.layers(baseMaps, {}, { position: 'topright' }).addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Stop auto-centering on manual drag
     map.on('dragstart', () => {
       autoCenterRef.current = false;
     });
@@ -117,7 +117,7 @@ export default function OrienteeringMap() {
     };
   }, []);
 
-  // Capture orientation events for webkitCompassHeading
+  // Capture orientation events
   useEffect(() => {
     const handler = (e: DeviceOrientationEvent) => {
       (window as any).lastOrientationEvent = e;
@@ -126,7 +126,7 @@ export default function OrienteeringMap() {
     return () => window.removeEventListener('deviceorientation', handler);
   }, []);
 
-  // Compute compass heading directly from orientation (no state needed)
+  // Compute compass heading
   const currentCompassHeading = (() => {
     if (orientation.alpha !== null) {
       const event = (window as any).lastOrientationEvent;
@@ -195,7 +195,7 @@ export default function OrienteeringMap() {
     }
   }, [geo.latitude, geo.longitude, geo.accuracy, showTrail]);
 
-  // Update heading/direction indicator
+  // Update heading indicator
   useEffect(() => {
     if (!mapRef.current || !positionMarkerRef.current) return;
 
@@ -231,7 +231,7 @@ export default function OrienteeringMap() {
     }
   }, [currentCompassHeading, geo.heading, geo.latitude]);
 
-  // Handle trail visibility
+  // Trail visibility
   useEffect(() => {
     if (trailLineRef.current && mapRef.current) {
       if (showTrail) {
@@ -244,58 +244,123 @@ export default function OrienteeringMap() {
     }
   }, [showTrail]);
 
-  // File upload handler
+  // File upload handler - full parsing with overlay support
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    try {
-      const geoJson = await parseMapFile(file);
+    setIsLoading(true);
+    setDebugInfo([]);
 
+    try {
+      const result: ParsedMapResult = await parseFullMapFile(file);
+
+      // Log debug info
+      console.log('[KMZ Parser]', result.debugInfo.join('\n'));
+      setDebugInfo(result.debugInfo);
+
+      // Remove existing layers
       if (kmlLayerRef.current) {
         kmlLayerRef.current.remove();
         kmlLayerRef.current = null;
       }
+      overlayLayersRef.current.forEach((layer) => layer.remove());
+      overlayLayersRef.current = [];
 
-      const layer = L.geoJSON(geoJson, {
-        style: () => ({
-          color: '#E67E22',
-          weight: 2,
-          opacity: 0.8,
-          fillColor: '#E67E22',
-          fillOpacity: 0.15,
-        }),
-        pointToLayer: (_feature, latlng) => {
-          return L.marker(latlng, { icon: defaultIcon });
-        },
-        onEachFeature: (feature, layer) => {
-          if (feature.properties) {
-            const name = feature.properties.name || feature.properties.title || '';
-            const desc = feature.properties.description || '';
-            if (name || desc) {
-              layer.bindPopup(`<strong>${name}</strong>${desc ? '<br/>' + desc : ''}`);
+      const map = mapRef.current;
+      if (!map) {
+        toast({ title: 'Ошибка', description: 'Карта не инициализирована', variant: 'destructive' });
+        return;
+      }
+
+      let hasContent = false;
+      const allBounds: L.LatLngBounds[] = [];
+
+      // Add image overlays (GroundOverlay)
+      if (result.overlays.length > 0) {
+        for (const overlay of result.overlays) {
+          const bounds = L.latLngBounds(
+            L.latLng(overlay.bounds.south, overlay.bounds.west),
+            L.latLng(overlay.bounds.north, overlay.bounds.east)
+          );
+
+          const imageOverlay = L.imageOverlay(overlay.imageUrl, bounds, {
+            opacity: 0.85,
+            interactive: true,
+          }).addTo(map);
+
+          overlayLayersRef.current.push(imageOverlay);
+          allBounds.push(bounds);
+          hasContent = true;
+        }
+      }
+
+      // Add vector features (GeoJSON)
+      if (result.geoJson) {
+        const layer = L.geoJSON(result.geoJson, {
+          style: () => ({
+            color: '#E67E22',
+            weight: 2,
+            opacity: 0.8,
+            fillColor: '#E67E22',
+            fillOpacity: 0.15,
+          }),
+          pointToLayer: (_feature, latlng) => {
+            return L.marker(latlng, { icon: defaultIcon });
+          },
+          onEachFeature: (feature, layer) => {
+            if (feature.properties) {
+              const name = feature.properties.name || feature.properties.title || '';
+              const desc = feature.properties.description || '';
+              if (name || desc) {
+                layer.bindPopup(`<strong>${name}</strong>${desc ? '<br/>' + desc : ''}`);
+              }
             }
-          }
-        },
-      });
+          },
+        });
 
-      if (mapRef.current) {
-        layer.addTo(mapRef.current);
-        mapRef.current.fitBounds(layer.getBounds().pad(0.1));
+        layer.addTo(map);
         kmlLayerRef.current = layer;
-        setKmlLoaded(true);
-        setKmlName(file.name);
+
+        if (layer.getBounds().isValid()) {
+          allBounds.push(layer.getBounds());
+        }
+        hasContent = true;
+      }
+
+      // Fit map to show all loaded content
+      if (allBounds.length > 0) {
+        const combinedBounds = allBounds.reduce((acc, b) => acc.extend(b), allBounds[0]);
+        map.fitBounds(combinedBounds.pad(0.1));
+      }
+
+      setKmlLoaded(true);
+      setKmlName(file.name);
+
+      if (hasContent) {
+        const parts: string[] = [];
+        if (result.overlays.length > 0) parts.push(`${result.overlays.length} слой(ёв) изображения`);
+        if (result.featureCount > 0) parts.push(`${result.featureCount} векторных объектов`);
         toast({
           title: 'Карта загружена',
-          description: `${file.name} успешно загружена`,
+          description: `${file.name}: ${parts.join(', ')}`,
+        });
+      } else {
+        toast({
+          title: 'Файл загружен, но данных нет',
+          description: 'KMZ не содержит отображаемых элементов. Откройте отладку для деталей.',
+          variant: 'destructive',
         });
       }
     } catch (err: any) {
+      console.error('[KMZ Parser Error]', err);
       toast({
         title: 'Ошибка загрузки',
         description: err.message || 'Не удалось загрузить файл карты',
         variant: 'destructive',
       });
+    } finally {
+      setIsLoading(false);
     }
 
     e.target.value = '';
@@ -310,20 +375,13 @@ export default function OrienteeringMap() {
     });
   }, [geo.latitude, geo.longitude]);
 
-  // Request compass permission
+  // Request compass
   const requestCompass = useCallback(async () => {
     const granted = await orientation.requestPermission();
     if (granted) {
-      toast({
-        title: 'Компас активирован',
-        description: 'Направление движения будет отображаться',
-      });
+      toast({ title: 'Компас активирован', description: 'Направление движения будет отображаться' });
     } else {
-      toast({
-        title: 'Компас недоступен',
-        description: 'Разрешите доступ к компасу в настройках',
-        variant: 'destructive',
-      });
+      toast({ title: 'Компас недоступен', description: 'Разрешите доступ к компасу в настройках', variant: 'destructive' });
     }
   }, [orientation]);
 
@@ -333,6 +391,14 @@ export default function OrienteeringMap() {
     <div className="relative w-full h-screen overflow-hidden bg-black">
       {/* Map container */}
       <div ref={mapContainerRef} className="w-full h-full" />
+
+      {/* Loading overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 z-[2000] bg-black/50 flex flex-col items-center justify-center gap-3">
+          <div className="animate-spin rounded-full h-10 w-10 border-4 border-primary border-t-transparent" />
+          <p className="text-white text-sm">Загрузка карты...</p>
+        </div>
+      )}
 
       {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-3 pointer-events-none">
@@ -344,15 +410,30 @@ export default function OrienteeringMap() {
             )}
           </div>
 
-          <label className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border cursor-pointer hover:bg-accent transition-colors active:scale-95">
-            <span className="text-sm font-medium text-foreground">📂 Карта</span>
-            <input
-              type="file"
-              accept=".kmz,.kml"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </label>
+          <div className="flex gap-2">
+            {/* Debug toggle */}
+            {debugInfo.length > 0 && (
+              <button
+                className="bg-background/90 backdrop-blur-sm rounded-xl px-3 py-2 shadow-lg border border-border text-xs text-muted-foreground"
+                onClick={() => {
+                  const info = debugInfo.join('\n');
+                  toast({ title: 'Отладка', description: info });
+                }}
+              >
+                🔍
+              </button>
+            )}
+
+            <label className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border cursor-pointer hover:bg-accent transition-colors active:scale-95">
+              <span className="text-sm font-medium text-foreground">📂 Карта</span>
+              <input
+                type="file"
+                accept=".kmz,.kml"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
       </div>
 
@@ -410,16 +491,7 @@ export default function OrienteeringMap() {
             className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
             onClick={centerOnPosition}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
               <circle cx="12" cy="12" r="4" />
               <line x1="12" y1="2" x2="12" y2="6" />
               <line x1="12" y1="18" x2="12" y2="22" />
@@ -436,16 +508,7 @@ export default function OrienteeringMap() {
             className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
             onClick={() => setShowTrail(!showTrail)}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
               <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
@@ -459,16 +522,7 @@ export default function OrienteeringMap() {
             className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
             onClick={requestCompass}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
               <circle cx="12" cy="12" r="10" />
               <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
             </svg>
@@ -484,16 +538,7 @@ export default function OrienteeringMap() {
             onClick={geo.startTracking}
             disabled={!geo.hasSupport}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-5 h-5 mr-2"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 mr-2">
               <circle cx="12" cy="12" r="4" />
               <line x1="12" y1="2" x2="12" y2="6" />
               <line x1="12" y1="18" x2="12" y2="22" />

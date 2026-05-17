@@ -22,3 +22,24 @@ Stage Summary:
 - Full orienteering web application built and running at localhost:3000
 - Features: KMZ/KML map loading, GPS tracking, compass heading, trail recording, 3 base map layers
 - All lint checks pass
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix KMZ loading - add GroundOverlay (image) support
+
+Work Log:
+- Identified that user's KMZ contains GroundOverlay (raster image) not vector features
+- Rewrote kmz-parser.ts with parseFullMapFile() that extracts both GeoJSON vectors AND image overlays
+- Added multiple strategies for finding images in KMZ archives (exact match, case-insensitive, basename, extension-based)
+- Added support for LatLonBox, direct coordinates, and LatLonQuad bounds parsing
+- Updated orienteering-map.tsx to use parseFullMapFile() and render L.imageOverlay
+- Added loading indicator during file parsing
+- Added debug info panel (🔍 button) showing parsing details
+- Added proper cleanup of overlay layers when re-loading files
+- All lint checks pass, server compiles OK
+
+Stage Summary:
+- KMZ GroundOverlay images now display correctly on the map
+- Debug info available to troubleshoot future file loading issues
+- Both vector (GeoJSON) and raster (image overlay) layers supported
