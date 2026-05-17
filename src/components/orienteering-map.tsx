@@ -194,25 +194,40 @@ export default function OrienteeringMap() {
         console.log('[Storage] Restoring map:', saved.fileName);
 
         // Reconstruct ParsedMapResult from saved data
+        let geoJson = null;
+        let featureCount = 0;
+        try {
+          if (saved.geoJson) {
+            geoJson = JSON.parse(saved.geoJson);
+            featureCount = geoJson?.features?.length || 0;
+          }
+        } catch (e) {
+          console.warn('[Storage] Failed to parse saved GeoJSON:', e);
+        }
+
         const result: ParsedMapResult = {
-          geoJson: saved.geoJson ? JSON.parse(saved.geoJson) : null,
-          overlays: saved.overlays.map((o) => ({
+          geoJson,
+          overlays: (saved.overlays || []).map((o) => ({
             imageUrl: o.imageBase64,
             bounds: o.bounds,
             name: o.name,
           })),
-          featureCount: saved.geoJson
-            ? (JSON.parse(saved.geoJson) as any).features?.length || 0
-            : 0,
-          overlayCount: saved.overlays.length,
+          featureCount,
+          overlayCount: (saved.overlays || []).length,
           debugInfo: [`Восстановлена карта: ${saved.fileName}`],
         };
 
-        // Wait for map to be ready
+        // Wait for map to be ready (with timeout)
+        let attempts = 0;
         const waitForMap = () => {
           if (mapRef.current) {
-            applyMapResult(result, saved.fileName);
-          } else {
+            try {
+              applyMapResult(result, saved.fileName);
+            } catch (err) {
+              console.warn('[Storage] Failed to apply restored map:', err);
+            }
+          } else if (attempts < 30) {
+            attempts++;
             setTimeout(waitForMap, 100);
           }
         };
@@ -222,8 +237,10 @@ export default function OrienteeringMap() {
       }
     };
 
-    restoreMap();
-  }, [applyMapResult]);
+    // Delay restore slightly to avoid race conditions
+    const timer = setTimeout(restoreMap, 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Capture orientation events
   useEffect(() => {
