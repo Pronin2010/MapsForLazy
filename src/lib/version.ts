@@ -4,9 +4,18 @@ export interface VersionInfo {
   changes: string[];
 }
 
-export const APP_VERSION = '1.3.1';
+export const APP_VERSION = '1.3.2';
 
 export const VERSION_HISTORY: VersionInfo[] = [
+  {
+    version: '1.3.2',
+    date: '2025-05-17',
+    changes: [
+      'Убрана кнопка отладки (🔍) из верхней панели',
+      'Плашка «Ориентирование» заменена на компактную иконку 🧭 с версией',
+      'Название файла карты показано отдельной маленькой меткой',
+    ],
+  },
   {
     version: '1.3.1',
     date: '2025-05-17',

@@ -500,37 +500,25 @@ export default function OrienteeringMap() {
       {/* ============ TOP BAR ============ */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-2 pointer-events-none">
         <div className="flex items-center justify-between pointer-events-auto gap-2">
-          {/* App title + version */}
+          {/* App icon + version — compact */}
           <button
-            className="bg-background/90 backdrop-blur-sm rounded-xl px-3 py-1.5 shadow-lg border border-border hover:bg-accent transition-colors shrink-0"
+            className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border hover:bg-accent transition-colors shrink-0 relative"
             onClick={() => setShowChangelog(true)}
+            title="История версий"
           >
-            <div className="flex items-center gap-1.5">
-              <h1 className="text-sm font-bold text-foreground">🧭 Ориентирование</h1>
-              <span className="text-[10px] font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded-md">
-                v{APP_VERSION}
-              </span>
-            </div>
-            {kmlLoaded && (
-              <p className="text-xs text-muted-foreground truncate max-w-[120px]">{kmlName}</p>
-            )}
+            <span className="text-lg">🧭</span>
+            <span className="absolute -bottom-1 -right-1 text-[8px] font-mono bg-primary text-primary-foreground px-1 py-0 rounded-md leading-tight">
+              {APP_VERSION}
+            </span>
           </button>
+          {kmlLoaded && (
+            <div className="bg-background/90 backdrop-blur-sm rounded-lg px-2 py-1 shadow border border-border shrink-0">
+              <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{kmlName}</p>
+            </div>
+          )}
 
           {/* Right action buttons — compact row */}
           <div className="flex gap-1.5 shrink-0">
-            {/* Debug toggle */}
-            {debugInfo.length > 0 && (
-              <button
-                className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border text-xs text-muted-foreground active:scale-95 transition-transform"
-                onClick={() => {
-                  const info = debugInfo.join('\n');
-                  toast({ title: 'Отладка', description: info });
-                }}
-              >
-                🔍
-              </button>
-            )}
-
             {/* Map type button */}
             <div className="relative">
               <button
