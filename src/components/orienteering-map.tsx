@@ -74,11 +74,33 @@ export default function OrienteeringMap() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showUrlDialog, setShowUrlDialog] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const [showMapType, setShowMapType] = useState(false);
+  const [activeMapType, setActiveMapType] = useState<string>('Схема');
   const [mapUrl, setMapUrl] = useState('');
   const [savedMaps, setSavedMaps] = useState<Array<{ name: string; url: string }>>([]);
 
   const geo = useGeolocation();
   const orientation = useDeviceOrientation();
+
+  // Switch base map type
+  const switchMapType = useCallback((type: string) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const baseLayers = (map as any)._baseLayers;
+    if (!baseLayers || !baseLayers[type]) return;
+
+    // Remove current base layer
+    const currentLayer = (map as any)._currentBaseLayer;
+    if (currentLayer) {
+      map.removeLayer(currentLayer);
+    }
+
+    // Add new base layer
+    baseLayers[type].addTo(map);
+    (map as any)._currentBaseLayer = baseLayers[type];
+    setActiveMapType(type);
+    setShowMapType(false);
+  }, []);
 
   // Load saved maps from localStorage
   useEffect(() => {
@@ -144,8 +166,10 @@ export default function OrienteeringMap() {
       'Спутник': satelliteLayer,
     };
 
-    L.control.layers(baseMaps, {}, { position: 'topright' }).addTo(map);
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    // No Leaflet built-in controls — we use custom UI to avoid overlaps
+    // Store base layers in ref for custom layer switching
+    (map as any)._baseLayers = baseMaps;
+    (map as any)._currentBaseLayer = osmLayer;
 
     map.on('dragstart', () => {
       autoCenterRef.current = false;
@@ -457,6 +481,9 @@ export default function OrienteeringMap() {
 
   const displayHeading = currentCompassHeading ?? geo.heading;
 
+  const mapTypes = ['Схема', 'Топо', 'Спутник'];
+  const mapTypeIcons: Record<string, string> = { 'Схема': '🗺️', 'Топо': '⛰️', 'Спутник': '🛰️' };
+
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black">
       {/* Map container */}
@@ -470,29 +497,31 @@ export default function OrienteeringMap() {
         </div>
       )}
 
-      {/* Top bar */}
-      <div className="absolute top-0 left-0 right-0 z-[1000] p-3 pointer-events-none">
-        <div className="flex items-center justify-between pointer-events-auto">
+      {/* ============ TOP BAR ============ */}
+      <div className="absolute top-0 left-0 right-0 z-[1000] p-2 pointer-events-none">
+        <div className="flex items-center justify-between pointer-events-auto gap-2">
+          {/* App title + version */}
           <button
-            className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border hover:bg-accent transition-colors"
+            className="bg-background/90 backdrop-blur-sm rounded-xl px-3 py-1.5 shadow-lg border border-border hover:bg-accent transition-colors shrink-0"
             onClick={() => setShowChangelog(true)}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <h1 className="text-sm font-bold text-foreground">🧭 Ориентирование</h1>
               <span className="text-[10px] font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded-md">
                 v{APP_VERSION}
               </span>
             </div>
             {kmlLoaded && (
-              <p className="text-xs text-muted-foreground truncate max-w-[150px]">{kmlName}</p>
+              <p className="text-xs text-muted-foreground truncate max-w-[120px]">{kmlName}</p>
             )}
           </button>
 
-          <div className="flex gap-2">
+          {/* Right action buttons — compact row */}
+          <div className="flex gap-1.5 shrink-0">
             {/* Debug toggle */}
             {debugInfo.length > 0 && (
               <button
-                className="bg-background/90 backdrop-blur-sm rounded-xl px-3 py-2 shadow-lg border border-border text-xs text-muted-foreground"
+                className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border text-xs text-muted-foreground active:scale-95 transition-transform"
                 onClick={() => {
                   const info = debugInfo.join('\n');
                   toast({ title: 'Отладка', description: info });
@@ -502,16 +531,47 @@ export default function OrienteeringMap() {
               </button>
             )}
 
+            {/* Map type button */}
+            <div className="relative">
+              <button
+                className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border active:scale-95 transition-transform"
+                onClick={() => setShowMapType(!showMapType)}
+              >
+                <span className="text-sm">{mapTypeIcons[activeMapType] || '🗺️'}</span>
+              </button>
+
+              {/* Map type dropdown */}
+              {showMapType && (
+                <div className="absolute top-12 right-0 bg-background/95 backdrop-blur-sm rounded-xl shadow-xl border border-border overflow-hidden min-w-[120px]">
+                  {mapTypes.map((type) => (
+                    <button
+                      key={type}
+                      className={`w-full text-left px-3 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                        type === activeMapType
+                          ? 'bg-primary/10 text-primary font-medium'
+                          : 'text-foreground hover:bg-muted'
+                      }`}
+                      onClick={() => switchMapType(type)}
+                    >
+                      <span>{mapTypeIcons[type]}</span>
+                      <span>{type}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Load from URL button */}
             <button
-              className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border hover:bg-accent transition-colors active:scale-95"
+              className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border active:scale-95 transition-transform"
               onClick={() => setShowUrlDialog(true)}
             >
-              <span className="text-sm font-medium text-foreground">🌐 URL</span>
+              <span className="text-sm">🌐</span>
             </button>
 
-            <label className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border cursor-pointer hover:bg-accent transition-colors active:scale-95">
-              <span className="text-sm font-medium text-foreground">📂 Файл</span>
+            {/* File upload button */}
+            <label className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border cursor-pointer active:scale-95 transition-transform">
+              <span className="text-sm">📂</span>
               <input
                 type="file"
                 accept=".kmz,.kml"
@@ -523,11 +583,11 @@ export default function OrienteeringMap() {
         </div>
       </div>
 
-      {/* PWA Install banner */}
+      {/* ============ PWA Install banner ============ */}
       {installPrompt && (
-        <div className="absolute top-20 left-3 right-3 z-[1001] pointer-events-auto">
-          <div className="bg-background/95 backdrop-blur-sm rounded-xl p-4 shadow-lg border border-border flex items-center gap-3">
-            <div className="text-2xl">📲</div>
+        <div className="absolute top-16 left-2 right-2 z-[1001] pointer-events-auto">
+          <div className="bg-background/95 backdrop-blur-sm rounded-xl p-3 shadow-lg border border-border flex items-center gap-3">
+            <div className="text-xl">📲</div>
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Установить приложение</p>
               <p className="text-xs text-muted-foreground">Работает офлайн, как нативное</p>
@@ -539,7 +599,163 @@ export default function OrienteeringMap() {
         </div>
       )}
 
-      {/* URL Load Dialog */}
+      {/* ============ Compass widget (left side, below top bar) ============ */}
+      {displayHeading !== null && (
+        <div className="absolute top-16 left-2 z-[1000]">
+          <div className="bg-background/90 backdrop-blur-sm rounded-xl p-2 shadow-lg border border-border">
+            <CompassWidget heading={displayHeading} />
+          </div>
+        </div>
+      )}
+
+      {/* ============ Zoom buttons (right side, below top bar) ============ */}
+      <div className="absolute top-16 right-2 z-[1000] flex flex-col gap-1 pointer-events-auto">
+        <button
+          className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border text-lg font-bold text-foreground active:scale-95 transition-transform"
+          onClick={() => mapRef.current?.zoomIn()}
+        >
+          +
+        </button>
+        <button
+          className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border text-lg font-bold text-foreground active:scale-95 transition-transform"
+          onClick={() => mapRef.current?.zoomOut()}
+        >
+          −
+        </button>
+      </div>
+
+      {/* ============ GPS info panel (left side, above bottom bar) ============ */}
+      <div className="absolute bottom-20 left-2 z-[1000] pointer-events-auto">
+        <div className="bg-background/90 backdrop-blur-sm rounded-xl p-2.5 shadow-lg border border-border min-w-[170px]">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div
+              className={`w-2.5 h-2.5 rounded-full ${
+                geo.isTracking
+                  ? geo.accuracy && geo.accuracy < 20
+                    ? 'bg-green-500'
+                    : geo.accuracy && geo.accuracy < 50
+                    ? 'bg-yellow-500'
+                    : 'bg-orange-500'
+                  : geo.error
+                  ? 'bg-red-500'
+                  : 'bg-gray-400'
+              }`}
+            />
+            <span className="text-xs text-muted-foreground">
+              {geo.isTracking
+                ? `GPS: ±${Math.round(geo.accuracy || 0)}м`
+                : geo.error
+                ? 'GPS: ошибка'
+                : 'GPS: выключен'}
+            </span>
+          </div>
+
+          {geo.latitude && geo.longitude && (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              <p>
+                {geo.latitude.toFixed(6)}, {geo.longitude.toFixed(6)}
+              </p>
+              {geo.altitude !== null && <p>Высота: {Math.round(geo.altitude)}м</p>}
+              {geo.speed !== null && geo.speed > 0 && (
+                <p>Скорость: {(geo.speed * 3.6).toFixed(1)} км/ч</p>
+              )}
+              {displayHeading !== null && (
+                <p>
+                  Направление: {Math.round(displayHeading)}° {getDirectionName(displayHeading)}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ============ Control buttons (right side, above bottom bar) ============ */}
+      <div className="absolute bottom-20 right-2 z-[1000] flex flex-col gap-1.5 pointer-events-auto">
+        {geo.isTracking && (
+          <button
+            className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border active:scale-95 transition-transform"
+            onClick={centerOnPosition}
+            title="Моё местоположение"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+              <circle cx="12" cy="12" r="4" />
+              <line x1="12" y1="2" x2="12" y2="6" />
+              <line x1="12" y1="18" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="6" y2="12" />
+              <line x1="18" y1="12" x2="22" y2="12" />
+            </svg>
+          </button>
+        )}
+
+        {geo.isTracking && (
+          <button
+            className={`rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border active:scale-95 transition-transform ${
+              showTrail
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-background/90 backdrop-blur-sm border-border'
+            }`}
+            onClick={() => setShowTrail(!showTrail)}
+            title="Трек маршрута"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        )}
+
+        {!orientation.hasPermission && orientation.isAvailable && (
+          <button
+            className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border active:scale-95 transition-transform"
+            onClick={requestCompass}
+            title="Включить компас"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+              <circle cx="12" cy="12" r="10" />
+              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* ============ Bottom bar ============ */}
+      <div className="absolute bottom-2 left-2 right-2 z-[1000] pointer-events-auto">
+        {!geo.isTracking ? (
+          <Button
+            className="w-full h-12 rounded-xl text-sm font-semibold shadow-lg active:scale-[0.98] transition-transform"
+            onClick={geo.startTracking}
+            disabled={!geo.hasSupport}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 mr-2">
+              <circle cx="12" cy="12" r="4" />
+              <line x1="12" y1="2" x2="12" y2="6" />
+              <line x1="12" y1="18" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="6" y2="12" />
+              <line x1="18" y1="12" x2="22" y2="12" />
+            </svg>
+            Включить геолокацию
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1 h-10 rounded-xl text-sm font-medium bg-background/90 backdrop-blur-sm shadow-lg active:scale-[0.98] transition-transform"
+              onClick={centerOnPosition}
+            >
+              📍 Моё местоположение
+            </Button>
+            <Button
+              variant="destructive"
+              className="h-10 rounded-xl text-sm font-medium shadow-lg px-4 active:scale-[0.98] transition-transform"
+              onClick={geo.stopTracking}
+            >
+              Стоп
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* ============ URL Load Dialog ============ */}
       {showUrlDialog && (
         <div className="absolute inset-0 z-[2000] bg-black/60 flex items-center justify-center p-4">
           <div className="bg-background rounded-2xl shadow-2xl border border-border w-full max-w-md overflow-hidden">
@@ -615,7 +831,7 @@ export default function OrienteeringMap() {
         </div>
       )}
 
-      {/* Changelog screen */}
+      {/* ============ Changelog screen ============ */}
       {showChangelog && (
         <div className="absolute inset-0 z-[2000] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-background rounded-t-2xl sm:rounded-2xl shadow-2xl border border-border w-full sm:max-w-md max-h-[85vh] flex flex-col overflow-hidden">
@@ -682,145 +898,6 @@ export default function OrienteeringMap() {
                 Закрыть
               </Button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* GPS info panel */}
-      <div className="absolute bottom-28 left-3 z-[1000] pointer-events-auto">
-        <div className="bg-background/90 backdrop-blur-sm rounded-xl p-3 shadow-lg border border-border min-w-[180px]">
-          <div className="flex items-center gap-2 mb-2">
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                geo.isTracking
-                  ? geo.accuracy && geo.accuracy < 20
-                    ? 'bg-green-500'
-                    : geo.accuracy && geo.accuracy < 50
-                    ? 'bg-yellow-500'
-                    : 'bg-orange-500'
-                  : geo.error
-                  ? 'bg-red-500'
-                  : 'bg-gray-400'
-              }`}
-            />
-            <span className="text-xs text-muted-foreground">
-              {geo.isTracking
-                ? `GPS: ±${Math.round(geo.accuracy || 0)}м`
-                : geo.error
-                ? 'GPS: ошибка'
-                : 'GPS: выключен'}
-            </span>
-          </div>
-
-          {geo.latitude && geo.longitude && (
-            <div className="text-xs text-muted-foreground space-y-0.5">
-              <p>
-                {geo.latitude.toFixed(6)}, {geo.longitude.toFixed(6)}
-              </p>
-              {geo.altitude !== null && <p>Высота: {Math.round(geo.altitude)}м</p>}
-              {geo.speed !== null && geo.speed > 0 && (
-                <p>Скорость: {(geo.speed * 3.6).toFixed(1)} км/ч</p>
-              )}
-              {displayHeading !== null && (
-                <p>
-                  Направление: {Math.round(displayHeading)}° {getDirectionName(displayHeading)}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Control buttons */}
-      <div className="absolute bottom-28 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
-        {geo.isTracking && (
-          <Button
-            variant="outline"
-            size="icon"
-            className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
-            onClick={centerOnPosition}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-              <circle cx="12" cy="12" r="4" />
-              <line x1="12" y1="2" x2="12" y2="6" />
-              <line x1="12" y1="18" x2="12" y2="22" />
-              <line x1="2" y1="12" x2="6" y2="12" />
-              <line x1="18" y1="12" x2="22" y2="12" />
-            </svg>
-          </Button>
-        )}
-
-        {geo.isTracking && (
-          <Button
-            variant={showTrail ? 'default' : 'outline'}
-            size="icon"
-            className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
-            onClick={() => setShowTrail(!showTrail)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </Button>
-        )}
-
-        {!orientation.hasPermission && orientation.isAvailable && (
-          <Button
-            variant="outline"
-            size="icon"
-            className="bg-background/90 backdrop-blur-sm rounded-xl shadow-lg h-12 w-12 active:scale-95 transition-transform"
-            onClick={requestCompass}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
-              <circle cx="12" cy="12" r="10" />
-              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-            </svg>
-          </Button>
-        )}
-      </div>
-
-      {/* Bottom bar */}
-      <div className="absolute bottom-3 left-3 right-3 z-[1000] pointer-events-auto">
-        {!geo.isTracking ? (
-          <Button
-            className="w-full h-14 rounded-xl text-base font-semibold shadow-lg active:scale-[0.98] transition-transform"
-            onClick={geo.startTracking}
-            disabled={!geo.hasSupport}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 mr-2">
-              <circle cx="12" cy="12" r="4" />
-              <line x1="12" y1="2" x2="12" y2="6" />
-              <line x1="12" y1="18" x2="12" y2="22" />
-              <line x1="2" y1="12" x2="6" y2="12" />
-              <line x1="18" y1="12" x2="22" y2="12" />
-            </svg>
-            Включить геолокацию
-          </Button>
-        ) : (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1 h-12 rounded-xl font-medium bg-background/90 backdrop-blur-sm shadow-lg active:scale-[0.98] transition-transform"
-              onClick={centerOnPosition}
-            >
-              📍 Моё местоположение
-            </Button>
-            <Button
-              variant="destructive"
-              className="h-12 rounded-xl font-medium shadow-lg px-4 active:scale-[0.98] transition-transform"
-              onClick={geo.stopTracking}
-            >
-              Стоп
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Compass widget */}
-      {displayHeading !== null && (
-        <div className="absolute top-16 left-3 z-[1000]">
-          <div className="bg-background/90 backdrop-blur-sm rounded-xl p-3 shadow-lg border border-border">
-            <CompassWidget heading={displayHeading} />
           </div>
         </div>
       )}
