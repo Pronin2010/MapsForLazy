@@ -8,6 +8,7 @@ import { useGeolocation } from '@/hooks/use-geolocation';
 import { useDeviceOrientation } from '@/hooks/use-device-orientation';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
+import { APP_VERSION, VERSION_HISTORY } from '@/lib/version';
 
 // PWA install prompt event type
 interface BeforeInstallPromptEvent extends Event {
@@ -72,6 +73,7 @@ export default function OrienteeringMap() {
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showUrlDialog, setShowUrlDialog] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
   const [mapUrl, setMapUrl] = useState('');
   const [savedMaps, setSavedMaps] = useState<Array<{ name: string; url: string }>>([]);
 
@@ -471,12 +473,20 @@ export default function OrienteeringMap() {
       {/* Top bar */}
       <div className="absolute top-0 left-0 right-0 z-[1000] p-3 pointer-events-none">
         <div className="flex items-center justify-between pointer-events-auto">
-          <div className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border">
-            <h1 className="text-sm font-bold text-foreground">🧭 Ориентирование</h1>
+          <button
+            className="bg-background/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-lg border border-border hover:bg-accent transition-colors"
+            onClick={() => setShowChangelog(true)}
+          >
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-bold text-foreground">🧭 Ориентирование</h1>
+              <span className="text-[10px] font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded-md">
+                v{APP_VERSION}
+              </span>
+            </div>
             {kmlLoaded && (
               <p className="text-xs text-muted-foreground truncate max-w-[150px]">{kmlName}</p>
             )}
-          </div>
+          </button>
 
           <div className="flex gap-2">
             {/* Debug toggle */}
@@ -599,6 +609,77 @@ export default function OrienteeringMap() {
                 disabled={!mapUrl.trim() || isLoading}
               >
                 {isLoading ? 'Загрузка...' : 'Загрузить'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Changelog screen */}
+      {showChangelog && (
+        <div className="absolute inset-0 z-[2000] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-background rounded-t-2xl sm:rounded-2xl shadow-2xl border border-border w-full sm:max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 pb-3 border-b border-border">
+              <div>
+                <h2 className="text-lg font-bold text-foreground">История версий</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Текущая версия: v{APP_VERSION}</p>
+              </div>
+              <button
+                className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-muted transition-colors text-muted-foreground"
+                onClick={() => setShowChangelog(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Version list */}
+            <div className="flex-1 overflow-y-auto p-5 pt-3 space-y-5">
+              {VERSION_HISTORY.map((v, i) => (
+                <div key={v.version} className="relative">
+                  {/* Version badge */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-md ${
+                      i === 0
+                        ? 'bg-primary/15 text-primary'
+                        : 'bg-muted text-muted-foreground'
+                    }`}>
+                      v{v.version}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{v.date}</span>
+                    {i === 0 && (
+                      <span className="text-[10px] font-medium bg-green-500/15 text-green-600 px-2 py-0.5 rounded-md">
+                        текущая
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Changes list */}
+                  <ul className="space-y-1.5 ml-1">
+                    {v.changes.map((change, j) => (
+                      <li key={j} className="flex items-start gap-2 text-sm text-foreground/80">
+                        <span className="text-muted-foreground mt-0.5 shrink-0">•</span>
+                        <span>{change}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Divider */}
+                  {i < VERSION_HISTORY.length - 1 && (
+                    <div className="mt-4 border-b border-border" />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 pt-2 border-t border-border">
+              <Button
+                variant="outline"
+                className="w-full rounded-xl h-11"
+                onClick={() => setShowChangelog(false)}
+              >
+                Закрыть
               </Button>
             </div>
           </div>
