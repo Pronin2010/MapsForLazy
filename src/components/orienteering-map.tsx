@@ -9,6 +9,7 @@ import { useDeviceOrientation } from '@/hooks/use-device-orientation';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { APP_VERSION, VERSION_HISTORY } from '@/lib/version';
+import { saveMapData, loadMapData, blobUrlToBase64, type SavedMapData, type SavedOverlay } from '@/lib/map-storage';
 
 // PWA install prompt event type
 interface BeforeInstallPromptEvent extends Event {
@@ -182,6 +183,47 @@ export default function OrienteeringMap() {
       mapRef.current = null;
     };
   }, []);
+
+  // Restore last opened map on startup
+  useEffect(() => {
+    const restoreMap = async () => {
+      try {
+        const saved = await loadMapData();
+        if (!saved) return;
+
+        console.log('[Storage] Restoring map:', saved.fileName);
+
+        // Reconstruct ParsedMapResult from saved data
+        const result: ParsedMapResult = {
+          geoJson: saved.geoJson ? JSON.parse(saved.geoJson) : null,
+          overlays: saved.overlays.map((o) => ({
+            imageUrl: o.imageBase64,
+            bounds: o.bounds,
+            name: o.name,
+          })),
+          featureCount: saved.geoJson
+            ? (JSON.parse(saved.geoJson) as any).features?.length || 0
+            : 0,
+          overlayCount: saved.overlays.length,
+          debugInfo: [`Восстановлена карта: ${saved.fileName}`],
+        };
+
+        // Wait for map to be ready
+        const waitForMap = () => {
+          if (mapRef.current) {
+            applyMapResult(result, saved.fileName);
+          } else {
+            setTimeout(waitForMap, 100);
+          }
+        };
+        waitForMap();
+      } catch (err) {
+        console.warn('[Storage] Failed to restore map:', err);
+      }
+    };
+
+    restoreMap();
+  }, [applyMapResult]);
 
   // Capture orientation events
   useEffect(() => {
@@ -404,9 +446,46 @@ export default function OrienteeringMap() {
     } else {
       toast({
         title: 'Файл загружен, но данных нет',
-        description: 'KMZ не содержит отображаемых элементов. Откройте отладку для деталей.',
+        description: 'KMZ не содержит отображаемых элементов.',
         variant: 'destructive',
       });
+    }
+
+    // Persist map data to IndexedDB for restore on next launch (caller must call persistMapResult)
+  }, []);
+
+  // Save parsed map to IndexedDB
+  const persistMapResult = useCallback(async (result: ParsedMapResult, fileName: string, mapType: 'file' | 'url', mapUrl?: string) => {
+    try {
+      // Convert overlay blob URLs to base64
+      const savedOverlays: SavedOverlay[] = [];
+      for (const overlay of result.overlays) {
+        let imageBase64 = overlay.imageUrl;
+        // If it's a blob URL, convert to base64
+        if (overlay.imageUrl.startsWith('blob:')) {
+          imageBase64 = await blobUrlToBase64(overlay.imageUrl);
+        }
+        savedOverlays.push({
+          imageBase64,
+          bounds: overlay.bounds,
+          name: overlay.name,
+        });
+      }
+
+      const data: SavedMapData = {
+        id: 'last',
+        fileName,
+        mapType,
+        mapUrl,
+        savedAt: Date.now(),
+        geoJson: result.geoJson ? JSON.stringify(result.geoJson) : '',
+        overlays: savedOverlays,
+      };
+
+      await saveMapData(data);
+      console.log('[Storage] Map saved:', fileName);
+    } catch (err) {
+      console.warn('[Storage] Failed to save map:', err);
     }
   }, []);
 
@@ -419,6 +498,7 @@ export default function OrienteeringMap() {
     try {
       const result = await parseFullMapFile(file);
       applyMapResult(result, file.name);
+      persistMapResult(result, file.name, 'file');
     } catch (err: any) {
       toast({
         title: 'Ошибка загрузки',
@@ -439,7 +519,10 @@ export default function OrienteeringMap() {
     setIsLoading(true);
     try {
       const result = await parseFullMapFromURL(mapUrl.trim());
-      applyMapResult(result, mapUrl.split('/').pop() || 'URL карта');
+      const name = mapUrl.split('/').pop() || 'URL карта';
+      applyMapResult(result, name);
+      // Also persist with URL info
+      persistMapResult(result, name, 'url', mapUrl.trim());
 
       // Save to recent maps
       const newMap = { name: mapUrl.split('/').pop() || 'Карта', url: mapUrl.trim() };

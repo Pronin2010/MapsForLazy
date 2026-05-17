@@ -4,9 +4,19 @@ export interface VersionInfo {
   changes: string[];
 }
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 
 export const VERSION_HISTORY: VersionInfo[] = [
+  {
+    version: '1.5.0',
+    date: '2025-05-17',
+    changes: [
+      'Последняя открытая карта запоминается при выходе',
+      'При запуске карта автоматически восстанавливается',
+      'Данные карты сохраняются в IndexedDB (GeoJSON + изображения)',
+      'Работает для карт загруженных из файла и по URL',
+    ],
+  },
   {
     version: '1.4.0',
     date: '2025-05-17',
