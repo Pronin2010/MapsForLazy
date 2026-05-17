@@ -18,6 +18,7 @@ export const viewport: Viewport = {
   initialScale: 1.0,
   maximumScale: 1.0,
   userScalable: false,
+  themeColor: "#E67E22",
 };
 
 export const metadata: Metadata = {
@@ -25,8 +26,18 @@ export const metadata: Metadata = {
   description: "Приложение для ориентирования на местности с поддержкой KMZ/KML карт, GPS-трекингом и компасом",
   keywords: ["ориентирование", "навигация", "карта", "GPS", "KMZ", "KML", "компас"],
   authors: [{ name: "Z.ai" }],
+  manifest: "/manifest.json",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: [
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Ориентирование",
   },
 };
 
@@ -36,12 +47,36 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="ru" suppressHydrationWarning>
+      <head>
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="manifest" href="/manifest.json" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
         {children}
         <Toaster />
+
+        {/* Service Worker Registration */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                    console.log('SW registered:', reg.scope);
+                  }).catch(function(err) {
+                    console.log('SW registration failed:', err);
+                  });
+                });
+              }
+            `,
+          }}
+        />
       </body>
     </html>
   );

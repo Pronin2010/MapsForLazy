@@ -9,6 +9,12 @@ import { useDeviceOrientation } from '@/hooks/use-device-orientation';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 
+// PWA install prompt event type
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 // Fix Leaflet default icon issue with bundlers
 const defaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -64,9 +70,30 @@ export default function OrienteeringMap() {
   const [showTrail, setShowTrail] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
   const geo = useGeolocation();
   const orientation = useDeviceOrientation();
+
+  // PWA install prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = useCallback(async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      toast({ title: 'Приложение установлено!', description: 'Найдите его на главном экране' });
+    }
+    setInstallPrompt(null);
+  }, [installPrompt]);
 
   // Initialize map
   useEffect(() => {
@@ -436,6 +463,22 @@ export default function OrienteeringMap() {
           </div>
         </div>
       </div>
+
+      {/* PWA Install banner */}
+      {installPrompt && (
+        <div className="absolute top-20 left-3 right-3 z-[1001] pointer-events-auto">
+          <div className="bg-background/95 backdrop-blur-sm rounded-xl p-4 shadow-lg border border-border flex items-center gap-3">
+            <div className="text-2xl">📲</div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Установить приложение</p>
+              <p className="text-xs text-muted-foreground">Работает офлайн, как нативное</p>
+            </div>
+            <Button size="sm" onClick={handleInstall} className="rounded-lg">
+              Установить
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* GPS info panel */}
       <div className="absolute bottom-28 left-3 z-[1000] pointer-events-auto">
