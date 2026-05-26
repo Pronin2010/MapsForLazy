@@ -4,9 +4,20 @@ export interface VersionInfo {
   changes: string[];
 }
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 
 export const VERSION_HISTORY: VersionInfo[] = [
+  {
+    version: '1.6.0',
+    date: '2025-05-17',
+    changes: [
+      'Быстрый запуск без интернета — нет долгих таймаутов',
+      'Инлайн SVG-иконки маркеров (не грузятся с unpkg.com)',
+      'Прозрачная заглушка для тайлов при ошибке загрузки',
+      'Service Worker: таймаут 3с для тайлов, мгновенный фолбэк',
+      'Отключена атрибуция Leaflet (лишние запросы)',
+    ],
+  },
   {
     version: '1.5.0',
     date: '2025-05-17',

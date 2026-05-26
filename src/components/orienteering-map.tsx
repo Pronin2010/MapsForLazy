@@ -17,15 +17,17 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-// Fix Leaflet default icon issue with bundlers
+// Inline SVG marker icon — works offline, no external requests
+const markerSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 41" width="25" height="41">
+  <path d="M12.5 0C5.6 0 0 5.6 0 12.5c0 9.4 12.5 28.5 12.5 28.5S25 21.9 25 12.5C25 5.6 19.4 0 12.5 0z" fill="#E67E22" stroke="#fff" stroke-width="1"/>
+  <circle cx="12.5" cy="12.5" r="5" fill="#fff"/>
+</svg>`;
+
 const defaultIcon = L.icon({
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconUrl: 'data:image/svg+xml,' + encodeURIComponent(markerSvg),
   iconSize: [25, 41],
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
-  shadowSize: [41, 41],
 });
 
 L.Marker.prototype.options.icon = defaultIcon;
@@ -141,22 +143,31 @@ export default function OrienteeringMap() {
       center: [55.7558, 37.6173],
       zoom: 14,
       zoomControl: false,
-      attributionControl: true,
+      attributionControl: false,  // disable to avoid external requests
     });
 
-    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    // Minimal offline tile — tiny transparent PNG to avoid network timeout
+    const offlineTile = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAABJRUEFTkSuQmCC';
+
+    const tileOptions = {
       maxZoom: 19,
+      errorTileUrl: offlineTile,
+    };
+
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      ...tileOptions,
+      attribution: '&copy; OSM',
     });
 
     const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+      ...tileOptions,
       maxZoom: 17,
+      attribution: '&copy; TopoMap',
     });
 
     const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      ...tileOptions,
       attribution: '&copy; Esri',
-      maxZoom: 19,
     });
 
     osmLayer.addTo(map);
