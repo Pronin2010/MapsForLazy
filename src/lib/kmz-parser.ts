@@ -63,6 +63,104 @@ export interface MapOverlay {
   name: string;
 }
 
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
+    img.src = url;
+  });
+}
+
+/**
+ * Meters per degree of latitude/longitude at the given latitude (WGS84 series).
+ * Accurate to well under a meter per kilometer for local maps.
+ */
+function metersPerDegree(lat: number): { mLat: number; mLon: number } {
+  const rad = (lat * Math.PI) / 180;
+  const mLat =
+    111132.954 - 559.822 * Math.cos(2 * rad) + 1.175 * Math.cos(4 * rad);
+  const mLon =
+    111412.84 * Math.cos(rad) - 93.5 * Math.cos(3 * rad) + 0.118 * Math.cos(5 * rad);
+  return { mLat, mLon };
+}
+
+/**
+ * KML semantics: the image is scaled to fill the LatLonBox, then rotated
+ * counterclockwise about the box center by `rotation` degrees. L.imageOverlay
+ * cannot rotate, so we bake the rotation into the bitmap via canvas and replace
+ * the bounds with the axis-aligned box of the rotated rectangle. Returns null
+ * when rotation is not applicable (e.g. tainted canvas for external images).
+ */
+async function applyOverlayRotation(
+  imageUrl: string,
+  bounds: { south: number; west: number; north: number; east: number },
+  rotationDeg: number,
+  isPng: boolean
+): Promise<{ imageUrl: string; bounds: { south: number; west: number; north: number; east: number } } | null> {
+  const img = await loadImage(imageUrl);
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) return null;
+
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cosA = Math.abs(Math.cos(rad));
+  const sinA = Math.abs(Math.sin(rad));
+
+  // Bitmap: rotate counterclockwise about its center, expand canvas to fit
+  const canvasW = Math.round(w * cosA + h * sinA);
+  const canvasH = Math.round(w * sinA + h * cosA);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.translate(canvasW / 2, canvasH / 2);
+  // Canvas y-axis points down, so a negative angle rotates counterclockwise
+  ctx.rotate(-rad);
+  ctx.drawImage(img, -w / 2, -h / 2);
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, isPng ? 'image/png' : 'image/jpeg', 0.92)
+  );
+  if (!blob) return null;
+
+  // Bounds: rotate the LatLonBox corners about the box center in local meters
+  const { mLat, mLon } = metersPerDegree((bounds.north + bounds.south) / 2);
+  const lonC = (bounds.east + bounds.west) / 2;
+  const halfW = ((bounds.east - bounds.west) / 2) * mLon;
+  const halfH = ((bounds.north - bounds.south) / 2) * mLat;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of [
+    [halfW, halfH],
+    [-halfW, halfH],
+    [halfW, -halfH],
+    [-halfW, -halfH],
+  ]) {
+    const rx = x * cos - y * sin;
+    const ry = x * sin + y * cos;
+    minX = Math.min(minX, rx);
+    maxX = Math.max(maxX, rx);
+    minY = Math.min(minY, ry);
+    maxY = Math.max(maxY, ry);
+  }
+
+  return {
+    imageUrl: URL.createObjectURL(blob),
+    bounds: {
+      south: (bounds.north + bounds.south) / 2 + minY / mLat,
+      north: (bounds.north + bounds.south) / 2 + maxY / mLat,
+      west: lonC + minX / mLon,
+      east: lonC + maxX / mLon,
+    },
+  };
+}
+
 export interface ParsedMapResult {
   geoJson: GeoJsonObject | null;
   overlays: MapOverlay[];
@@ -240,10 +338,12 @@ async function parseGroundOverlays(
     debugInfo.push(`Overlay ${i} "${overlayName}": ссылка = "${href}"`);
 
     let imageUrl = '';
+    let isPng = false;
 
     // Handle data URI
     if (href.startsWith('data:')) {
       imageUrl = href;
+      isPng = href.startsWith('data:image/png');
       debugInfo.push(`Overlay ${i}: Data URI, длина = ${href.length}`);
     } else if (zip) {
       // KMZ - find the image inside the archive
@@ -309,6 +409,7 @@ async function parseGroundOverlays(
         const mime = mimeMap[ext || ''] || 'image/png';
         const typedBlob = new Blob([imageBlob], { type: mime });
         imageUrl = URL.createObjectURL(typedBlob);
+        isPng = mime === 'image/png';
         debugInfo.push(
           `Overlay ${i}: найдено изображение "${foundPath}", MIME=${mime}, размер=${(typedBlob.size / 1024).toFixed(1)} КБ`
         );
@@ -398,9 +499,51 @@ async function parseGroundOverlays(
       continue;
     }
 
+    // <rotation> of LatLonBox: image fills the box, then rotates about its
+    // center (positive = counterclockwise). Normalize into (-180, 180].
+    const rotationRaw = parseFloat(
+      latLonBox?.querySelector('rotation')?.textContent || '0'
+    );
+    const rotation = isNaN(rotationRaw)
+      ? 0
+      : ((rotationRaw % 360) + 540) % 360 - 180;
+
+    let finalImageUrl = imageUrl;
+    let finalBounds = { south, west, north, east };
+
+    if (Math.abs(rotation) > 0.01) {
+      debugInfo.push(
+        `Overlay ${i}: rotation=${rotationRaw.toFixed(2)}°, применяю поворот изображения`
+      );
+      try {
+        const rotated = await applyOverlayRotation(
+          imageUrl,
+          finalBounds,
+          rotation,
+          isPng
+        );
+        if (rotated) {
+          if (imageUrl.startsWith('blob:')) URL.revokeObjectURL(imageUrl);
+          finalImageUrl = rotated.imageUrl;
+          finalBounds = rotated.bounds;
+          debugInfo.push(
+            `Overlay ${i}: поворот применён (${rotation.toFixed(2)}°), новые границы Ю=${finalBounds.south.toFixed(6)} С=${finalBounds.north.toFixed(6)} З=${finalBounds.west.toFixed(6)} В=${finalBounds.east.toFixed(6)}`
+          );
+        } else {
+          debugInfo.push(
+            `Overlay ${i}: поворот НЕ применён - не удалось обработать изображение`
+          );
+        }
+      } catch (e) {
+        debugInfo.push(
+          `Overlay ${i}: поворот НЕ применён - ${(e as Error).message}`
+        );
+      }
+    }
+
     overlays.push({
-      imageUrl,
-      bounds: { south, west, north, east },
+      imageUrl: finalImageUrl,
+      bounds: finalBounds,
       name: overlayName,
     });
   }

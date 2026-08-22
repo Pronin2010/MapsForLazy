@@ -4,9 +4,18 @@ export interface VersionInfo {
   changes: string[];
 }
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.6.1';
 
 export const VERSION_HISTORY: VersionInfo[] = [
+  {
+    version: '1.6.1',
+    date: '2026-08-22',
+    changes: [
+      'Учёт поворота карты из KML (<rotation>) — повёрнутые карты больше не отображаются «дыбом»',
+      'Поворот запекается в изображение: работает офлайн и сохраняется в IndexedDB',
+      'Если изображение не удаётся обработать — показывается как раньше, без поворота',
+    ],
+  },
   {
     version: '1.6.0',
     date: '2025-05-17',

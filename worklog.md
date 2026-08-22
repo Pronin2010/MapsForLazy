@@ -43,3 +43,22 @@ Stage Summary:
 - KMZ GroundOverlay images now display correctly on the map
 - Debug info available to troubleshoot future file loading issues
 - Both vector (GeoJSON) and raster (image overlay) layers supported
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Fix GroundOverlay rotation (KML <rotation> was ignored — rotated maps displayed north-up)
+
+Work Log:
+- Diagnosed: user's KMZ (Avangard_26-1.kmz) has <rotation>-309.21</rotation> in LatLonBox; parser ignored it and L.imageOverlay cannot rotate images
+- Confirmed KML semantics: image fills LatLonBox, then rotates counterclockwise about box center (positive = counterclockwise per Google KML Reference)
+- Added rotation parsing in parseGroundOverlays() with normalization into (-180, 180]
+- Implemented applyOverlayRotation(): bakes rotation into the bitmap via canvas and recomputes bounds as the axis-aligned box of the rotated rectangle (WGS84 meters-per-degree at box center)
+- Source format preserved: PNG stays PNG (alpha), others re-encoded as JPEG 0.92
+- Graceful fallback: if image cannot be loaded/rotated (external URL, tainted canvas) overlay is shown unrotated as before, with debug info messages
+- No changes needed in orienteering-map.tsx or map-storage.ts — rotated image + bounds flow through rendering and IndexedDB save/restore unchanged
+- Verified: Avangard_26-1.kmz renders rotated +50.79° with bounds Ю=48.723969 С=48.735511 З=44.864896 В=44.881401 (matches reference math); no-rotation KMZ regression-tested (identical to old behavior); map restore after reload keeps rotation; lint passes
+
+Stage Summary:
+- Rotated orienteering maps now display with correct orientation
+- Works offline (no extra requests), rotation persists in saved maps
