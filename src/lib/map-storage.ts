@@ -21,6 +21,7 @@ export interface SavedOverlay {
   imageBase64: string;       // data:image/png;base64,...
   bounds: { south: number; west: number; north: number; east: number };
   name: string;
+  rotation?: number;         // KML rotation (deg, ccw) for map-up view mode
 }
 
 function isIndexedDBAvailable(): boolean {

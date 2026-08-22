@@ -62,3 +62,22 @@ Work Log:
 Stage Summary:
 - Rotated orienteering maps now display with correct orientation
 - Works offline (no extra requests), rotation persists in saved maps
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Map-up display mode — no dark corners, map sheet reads horizontally
+
+Work Log:
+- Diagnosed user feedback: after baking KML rotation the sheet displayed sideways (tilted ~51°) with black triangular corners (JPEG re-encode has no alpha)
+- Parser: rotated bitmap is now encoded with transparency — WebP first, PNG fallback, white-margins JPEG as last resort; MapOverlay gained rotation field
+- Added leaflet-rotate (0.2.8): map view rotates so the sheet is horizontal while staying geo-correct (GPS dot, trail and popups are compensated by the plugin)
+- After loading a rotated overlay the view bearing is set to the KML rotation before fitBounds (plugin fits the rotated footprint)
+- Toggle button (🗺️/🧭) switches between "map up" (default when rotation exists) and "north up", re-fitting bounds; hidden for maps without rotation
+- rotation persists in IndexedDB (SavedOverlay.rotation), restored maps auto-open in map-up mode
+- Plugin options: rotate:true, rotateControl:false (custom UI), shiftKeyRotate:false (no wheel hijack); type shim in src/types/leaflet-rotate.d.ts
+- Verified in browser: sheet horizontal + no dark corners (WebP, basemap visible through corners); toggle works both ways; reload restores map-up mode; no-rotation KMZ regression-tested (no rotation, no toggle); lint passes
+
+Stage Summary:
+- Rotated orienteering maps now read horizontally with no dark padding around them
+- Geographic accuracy preserved: view rotation is purely visual, GPS stays on the right spot

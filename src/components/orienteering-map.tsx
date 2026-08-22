@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
+import 'leaflet-rotate';
 import 'leaflet/dist/leaflet.css';
 import { parseFullMapFile, parseFullMapFromURL, type ParsedMapResult } from '@/lib/kmz-parser';
 import { useGeolocation } from '@/hooks/use-geolocation';
@@ -68,6 +69,13 @@ export default function OrienteeringMap() {
   const trailLineRef = useRef<L.Polyline | null>(null);
   const trailPointsRef = useRef<L.LatLng[]>([]);
   const autoCenterRef = useRef(true);
+  // Map-up mode: rotate the view so the loaded map sheet reads horizontally
+  // instead of north-up (bearing = KML rotation of the overlay, positive ccw).
+  const [mapRotation, setMapRotation] = useState(0);
+  const [mapUp, setMapUp] = useState(true);
+  const mapRotationRef = useRef(0);
+  const mapUpRef = useRef(true);
+  const lastBoundsRef = useRef<L.LatLngBounds | null>(null);
 
   const [kmlLoaded, setKmlLoaded] = useState(false);
   const [kmlName, setKmlName] = useState<string>('');
@@ -103,6 +111,21 @@ export default function OrienteeringMap() {
     (map as any)._currentBaseLayer = baseLayers[type];
     setActiveMapType(type);
     setShowMapType(false);
+  }, []);
+
+  // Toggle between "map up" (sheet horizontal, north tilted) and north-up view
+  const handleToggleMapUp = useCallback(() => {
+    const map = mapRef.current;
+    const rotation = mapRotationRef.current;
+    if (!map || Math.abs(rotation) < 0.01) return;
+
+    const next = !mapUpRef.current;
+    mapUpRef.current = next;
+    setMapUp(next);
+    map.setBearing(next ? rotation : 0);
+    if (lastBoundsRef.current) {
+      map.fitBounds(lastBoundsRef.current.pad(0.1));
+    }
   }, []);
 
   // Load saved maps from localStorage
@@ -144,6 +167,9 @@ export default function OrienteeringMap() {
       zoom: 14,
       zoomControl: false,
       attributionControl: false,  // disable to avoid external requests
+      rotate: true,               // enable view rotation (map-up mode)
+      rotateControl: false,       // custom UI instead of the plugin control
+      shiftKeyRotate: false,      // don't hijack shift+wheel
     });
 
     // Minimal offline tile — tiny transparent PNG to avoid network timeout
@@ -222,6 +248,7 @@ export default function OrienteeringMap() {
             imageUrl: o.imageBase64,
             bounds: o.bounds,
             name: o.name,
+            rotation: o.rotation,
           })),
           featureCount,
           overlayCount: (saved.overlays || []).length,
@@ -457,6 +484,15 @@ export default function OrienteeringMap() {
     // Fit map to show all loaded content
     if (allBounds.length > 0) {
       const combinedBounds = allBounds.reduce((acc, b) => acc.extend(b), allBounds[0]);
+
+      // Rotate the view so the map sheet reads horizontally (map-up mode).
+      // Must happen before fitBounds: the plugin fits the rotated footprint.
+      const rotation = result.overlays.find((o) => o.rotation)?.rotation || 0;
+      mapRotationRef.current = rotation;
+      setMapRotation(rotation);
+      lastBoundsRef.current = combinedBounds;
+      map.setBearing(rotation !== 0 && mapUpRef.current ? rotation : 0);
+
       map.fitBounds(combinedBounds.pad(0.1));
     }
 
@@ -497,6 +533,7 @@ export default function OrienteeringMap() {
           imageBase64,
           bounds: overlay.bounds,
           name: overlay.name,
+          rotation: overlay.rotation,
         });
       }
 
@@ -660,8 +697,23 @@ export default function OrienteeringMap() {
               )}
             </div>
 
-            {/* Load from URL button */}
+          {/* Orientation toggle: map-up (sheet horizontal) vs north-up */}
+          {mapRotation !== 0 && (
             <button
+              className={`rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border active:scale-95 transition-transform ${
+                mapUp
+                  ? 'bg-primary/90 text-primary-foreground border-primary'
+                  : 'bg-background/90 border-border'
+              }`}
+              onClick={handleToggleMapUp}
+              title={mapUp ? 'Карта ровно (нажмите: север сверху)' : 'Север сверху (нажмите: карта ровно)'}
+            >
+              <span className="text-sm">{mapUp ? '🗺️' : '🧭'}</span>
+            </button>
+          )}
+
+          {/* Load from URL button */}
+          <button
               className="bg-background/90 backdrop-blur-sm rounded-xl w-10 h-10 flex items-center justify-center shadow-lg border border-border active:scale-95 transition-transform"
               onClick={() => setShowUrlDialog(true)}
             >

@@ -61,6 +61,11 @@ export interface MapOverlay {
   imageUrl: string;
   bounds: { south: number; west: number; north: number; east: number };
   name: string;
+  /**
+   * Applied KML rotation in degrees, normalized to (-180, 180], positive =
+   * counterclockwise sheet tilt in a north-up view. Undefined when no rotation.
+   */
+  rotation?: number;
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -96,9 +101,8 @@ function metersPerDegree(lat: number): { mLat: number; mLon: number } {
 async function applyOverlayRotation(
   imageUrl: string,
   bounds: { south: number; west: number; north: number; east: number },
-  rotationDeg: number,
-  isPng: boolean
-): Promise<{ imageUrl: string; bounds: { south: number; west: number; north: number; east: number } } | null> {
+  rotationDeg: number
+): Promise<{ imageUrl: string; bounds: { south: number; west: number; north: number; east: number }; encoded: string } | null> {
   const img = await loadImage(imageUrl);
   const w = img.naturalWidth;
   const h = img.naturalHeight;
@@ -122,10 +126,36 @@ async function applyOverlayRotation(
   ctx.rotate(-rad);
   ctx.drawImage(img, -w / 2, -h / 2);
 
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, isPng ? 'image/png' : 'image/jpeg', 0.92)
-  );
-  if (!blob) return null;
+  // Corners around the rotated sheet must stay transparent, otherwise they
+  // show up as dark triangles over the basemap. Prefer WebP, then PNG;
+  // only as a last resort emit an opaque JPEG with white margins.
+  const toBlob = (type: string, quality?: number) =>
+    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+
+  let resultUrl = '';
+  let encoded = '';
+
+  const webpBlob = await toBlob('image/webp', 0.9);
+  if (webpBlob && webpBlob.type === 'image/webp') {
+    resultUrl = URL.createObjectURL(webpBlob);
+    encoded = 'webp';
+  } else {
+    const pngBlob = await toBlob('image/png');
+    if (pngBlob && pngBlob.size < 10 * 1024 * 1024) {
+      resultUrl = URL.createObjectURL(pngBlob);
+      encoded = 'png';
+    }
+  }
+
+  if (!resultUrl) {
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    const jpegBlob = await toBlob('image/jpeg', 0.92);
+    if (!jpegBlob) return null;
+    resultUrl = URL.createObjectURL(jpegBlob);
+    encoded = 'jpeg';
+  }
 
   // Bounds: rotate the LatLonBox corners about the box center in local meters
   const { mLat, mLon } = metersPerDegree((bounds.north + bounds.south) / 2);
@@ -151,7 +181,8 @@ async function applyOverlayRotation(
   }
 
   return {
-    imageUrl: URL.createObjectURL(blob),
+    imageUrl: resultUrl,
+    encoded,
     bounds: {
       south: (bounds.north + bounds.south) / 2 + minY / mLat,
       north: (bounds.north + bounds.south) / 2 + maxY / mLat,
@@ -338,12 +369,10 @@ async function parseGroundOverlays(
     debugInfo.push(`Overlay ${i} "${overlayName}": ссылка = "${href}"`);
 
     let imageUrl = '';
-    let isPng = false;
 
     // Handle data URI
     if (href.startsWith('data:')) {
       imageUrl = href;
-      isPng = href.startsWith('data:image/png');
       debugInfo.push(`Overlay ${i}: Data URI, длина = ${href.length}`);
     } else if (zip) {
       // KMZ - find the image inside the archive
@@ -409,7 +438,6 @@ async function parseGroundOverlays(
         const mime = mimeMap[ext || ''] || 'image/png';
         const typedBlob = new Blob([imageBlob], { type: mime });
         imageUrl = URL.createObjectURL(typedBlob);
-        isPng = mime === 'image/png';
         debugInfo.push(
           `Overlay ${i}: найдено изображение "${foundPath}", MIME=${mime}, размер=${(typedBlob.size / 1024).toFixed(1)} КБ`
         );
@@ -510,24 +538,21 @@ async function parseGroundOverlays(
 
     let finalImageUrl = imageUrl;
     let finalBounds = { south, west, north, east };
+    let appliedRotation: number | undefined = undefined;
 
     if (Math.abs(rotation) > 0.01) {
       debugInfo.push(
         `Overlay ${i}: rotation=${rotationRaw.toFixed(2)}°, применяю поворот изображения`
       );
       try {
-        const rotated = await applyOverlayRotation(
-          imageUrl,
-          finalBounds,
-          rotation,
-          isPng
-        );
+        const rotated = await applyOverlayRotation(imageUrl, finalBounds, rotation);
         if (rotated) {
           if (imageUrl.startsWith('blob:')) URL.revokeObjectURL(imageUrl);
           finalImageUrl = rotated.imageUrl;
           finalBounds = rotated.bounds;
+          appliedRotation = rotation;
           debugInfo.push(
-            `Overlay ${i}: поворот применён (${rotation.toFixed(2)}°), новые границы Ю=${finalBounds.south.toFixed(6)} С=${finalBounds.north.toFixed(6)} З=${finalBounds.west.toFixed(6)} В=${finalBounds.east.toFixed(6)}`
+            `Overlay ${i}: поворот применён (${rotation.toFixed(2)}°, формат ${rotated.encoded}), новые границы Ю=${finalBounds.south.toFixed(6)} С=${finalBounds.north.toFixed(6)} З=${finalBounds.west.toFixed(6)} В=${finalBounds.east.toFixed(6)}`
           );
         } else {
           debugInfo.push(
@@ -545,6 +570,7 @@ async function parseGroundOverlays(
       imageUrl: finalImageUrl,
       bounds: finalBounds,
       name: overlayName,
+      rotation: appliedRotation,
     });
   }
 
